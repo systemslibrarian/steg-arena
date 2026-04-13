@@ -1,0 +1,33 @@
+{
+  "args": {
+    "image_dir": "./images",
+    "output_dir": "./output",
+    "image_size": 32,
+    "payload_len": 32,
+    "batch_size": 8,
+    "rounds": 2,
+    "epochs_per_round": 1,
+    "lr": 0.001,
+    "checkpoint_every": 5
+  },
+  "history": [
+    {
+      "round": 1,
+      "warden_acc": 0.499,
+      "warden_loss": 1.3868,
+      "encoder_ber": 0.4277,
+      "encoder_ssim": 0.5375,
+      "encoder_psnr": 30.2,
+      "encoder_loss": 1.024
+    },
+    {
+      "round": 2,
+      "warden_acc": 0.8296,
+      "warden_loss": 1.2706,
+      "encoder_ber": 0.4199,
+      "encoder_ssim": 0.5621,
+      "encoder_psnr": 29.22,
+      "encoder_loss": 0.9957
+    }
+  ]
+}

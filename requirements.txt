@@ -1,0 +1,14 @@
+# steg-arena — Python dependencies
+#
+# CPU-only PyTorch (smaller download, no CUDA overhead):
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+#
+# Then install the rest:
+#   pip install -r requirements.txt
+
+torch>=2.0.0
+torchvision>=0.15.0
+matplotlib>=3.7.0
+Pillow>=9.5.0
+numpy>=1.24.0
+onnx>=1.14.0          # for export_onnx.py — validates exported graph

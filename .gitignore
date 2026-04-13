@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+output/*.pt
+output/checkpoint_*.pt
+images/
+*.egg-info/
+.env
+BOSSbase_1.01.zip

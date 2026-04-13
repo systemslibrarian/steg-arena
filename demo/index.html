@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Steg Arena — Adversarial Steganography Demo</title>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/ort.min.js"></script>
+<style>
+  :root {
+    --bg:        #0d1117;
+    --surface:   #161b22;
+    --border:    #30363d;
+    --accent:    #58a6ff;
+    --green:     #3fb950;
+    --red:       #f85149;
+    --yellow:    #d29922;
+    --text:      #e6edf3;
+    --muted:     #8b949e;
+    --radius:    8px;
+    --font-mono: 'Courier New', Courier, monospace;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Header ── */
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 1.2rem 2rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+  .logo { font-size: 1.5rem; }
+  .header-title h1 { font-size: 1.2rem; font-weight: 700; color: var(--accent); }
+  .header-title p  { font-size: 0.78rem; color: var(--muted); margin-top: 2px; }
+
+  /* ── Model status bar ── */
+  #status-bar {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 0.6rem 2rem;
+    display: flex;
+    gap: 1.5rem;
+    font-size: 0.8rem;
+    font-family: var(--font-mono);
+    flex-wrap: wrap;
+  }
+  .model-badge {
+    display: flex; align-items: center; gap: 0.4rem;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.loading { background: var(--yellow); animation: pulse 1s infinite; }
+  .dot.ready   { background: var(--green); }
+  .dot.error   { background: var(--red); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  /* ── Tabs ── */
+  .tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    padding: 0 2rem;
+  }
+  .tab {
+    padding: 0.75rem 1.5rem;
+    cursor: pointer;
+    font-size: 0.9rem;
+    color: var(--muted);
+    border-bottom: 2px solid transparent;
+    transition: all .2s;
+    user-select: none;
+    background: none;
+    border-top: none;
+    border-left: none;
+    border-right: none;
+  }
+  .tab:hover  { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* ── Main layout ── */
+  main { flex: 1; padding: 2rem; max-width: 1100px; margin: 0 auto; width: 100%; }
+
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  .card h2 { font-size: 1rem; color: var(--accent); margin-bottom: 1rem; }
+
+  /* ── Two-column layout ── */
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+  @media (max-width: 700px) { .cols { grid-template-columns: 1fr; } }
+
+  /* ── Drop zone ── */
+  .drop-zone {
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 2rem;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .2s, background .2s;
+    position: relative;
+    min-height: 160px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+  .drop-zone:hover, .drop-zone.drag-over {
+    border-color: var(--accent);
+    background: rgba(88,166,255,0.05);
+  }
+  .drop-zone input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+  }
+  .drop-zone .icon { font-size: 2rem; }
+  .drop-zone .label { font-size: 0.85rem; color: var(--muted); }
+  .drop-zone .label strong { color: var(--accent); }
+
+  /* ── Image preview ── */
+  .preview-wrap {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    min-height: 160px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #0a0e13;
+  }
+  .preview-wrap img { max-width: 100%; max-height: 280px; object-fit: contain; display: block; }
+  .preview-wrap .placeholder { color: var(--muted); font-size: 0.85rem; }
+
+  /* ── Form elements ── */
+  label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 0.4rem; }
+  input[type=text], textarea {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 0.6rem 0.8rem;
+    font-size: 0.9rem;
+    font-family: var(--font-mono);
+    outline: none;
+    transition: border-color .2s;
+  }
+  input[type=text]:focus, textarea:focus { border-color: var(--accent); }
+  textarea { resize: vertical; min-height: 80px; }
+
+  /* ── Buttons ── */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1.2rem;
+    border-radius: var(--radius);
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    transition: opacity .2s, transform .1s;
+  }
+  .btn:hover:not(:disabled) { opacity: 0.85; }
+  .btn:active:not(:disabled) { transform: scale(0.97); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-primary  { background: var(--accent); color: #0d1117; }
+  .btn-success  { background: var(--green);  color: #0d1117; }
+  .btn-danger   { background: var(--red);    color: #fff; }
+
+  /* ── Result badge ── */
+  .result-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: var(--radius);
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-top: 1rem;
+  }
+  .badge-clean  { background: rgba(63,185,80,0.15);  border: 1px solid var(--green); color: var(--green); }
+  .badge-stego  { background: rgba(248,81,73,0.15);  border: 1px solid var(--red);   color: var(--red); }
+  .badge-warn   { background: rgba(210,153,34,0.15); border: 1px solid var(--yellow); color: var(--yellow); }
+
+  /* ── Probability bar ── */
+  .prob-bar-wrap { margin-top: 1rem; }
+  .prob-label { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.3rem; }
+  .prob-bar-bg { height: 8px; border-radius: 4px; background: var(--border); overflow: hidden; }
+  .prob-bar-fill { height: 100%; border-radius: 4px; transition: width .5s; }
+
+  /* ── Bit grid ── */
+  .bit-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 0.8rem;
+    font-family: var(--font-mono);
+  }
+  .bit {
+    width: 22px; height: 22px;
+    border-radius: 3px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.7rem; font-weight: 700;
+  }
+  .bit-1 { background: rgba(88,166,255,0.2); color: var(--accent); }
+  .bit-0 { background: var(--border); color: var(--muted); }
+
+  /* ── Log ── */
+  .log {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.8rem 1rem;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--muted);
+    max-height: 120px;
+    overflow-y: auto;
+    margin-top: 1rem;
+  }
+  .log-line { line-height: 1.6; }
+  .log-line.ok  { color: var(--green); }
+  .log-line.err { color: var(--red); }
+  .log-line.info { color: var(--accent); }
+
+  /* ── Info box ── */
+  .info-box {
+    background: rgba(88,166,255,0.07);
+    border: 1px solid rgba(88,166,255,0.2);
+    border-radius: var(--radius);
+    padding: 1rem;
+    font-size: 0.82rem;
+    color: var(--muted);
+    line-height: 1.6;
+    margin-bottom: 1rem;
+  }
+  .info-box strong { color: var(--text); }
+
+  /* ── Footer ── */
+  footer {
+    text-align: center;
+    padding: 1.5rem;
+    font-size: 0.78rem;
+    color: var(--muted);
+    border-top: 1px solid var(--border);
+    font-style: italic;
+  }
+  footer a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<!-- ── Header ───────────────────────────────────────────────────────────── -->
+<header>
+  <div class="logo">🔏</div>
+  <div class="header-title">
+    <h1>Steg Arena</h1>
+    <p>Adversarial Neural Steganography — AI-learned hiding vs AI-learned detection</p>
+  </div>
+</header>
+
+<!-- ── Model status ──────────────────────────────────────────────────────── -->
+<div id="status-bar">
+  <span style="color:var(--muted); font-size:0.8rem;">Models:</span>
+  <div class="model-badge"><div class="dot loading" id="dot-enc"></div><span id="lbl-enc">encoder.onnx loading…</span></div>
+  <div class="model-badge"><div class="dot loading" id="dot-dec"></div><span id="lbl-dec">decoder.onnx loading…</span></div>
+  <div class="model-badge"><div class="dot loading" id="dot-war"></div><span id="lbl-war">warden.onnx loading…</span></div>
+</div>
+
+<!-- ── Tabs ──────────────────────────────────────────────────────────────── -->
+<div class="tabs">
+  <button class="tab active" onclick="showTab('embed')">🖼 Embed Secret</button>
+  <button class="tab" onclick="showTab('detect')">🔍 Detect Stego</button>
+  <button class="tab" onclick="showTab('extract')">🔓 Extract Payload</button>
+  <button class="tab" onclick="showTab('about')">📖 About</button>
+</div>
+
+<!-- ── Main ──────────────────────────────────────────────────────────────── -->
+<main>
+
+  <!-- EMBED PANEL -->
+  <div class="panel active" id="panel-embed">
+    <div class="info-box">
+      The <strong>Encoder</strong> is a neural network trained to hide a secret payload inside a cover image
+      so imperceptibly that the <strong>Warden</strong> cannot detect it. Upload any image, type a message,
+      and download the stego image — it will look identical to the original.
+    </div>
+
+    <div class="cols">
+      <div class="card">
+        <h2>1 · Upload Cover Image</h2>
+        <div class="drop-zone" id="dz-cover">
+          <input type="file" accept="image/*" id="file-cover" onchange="handleCoverUpload(event)">
+          <div class="icon">🖼</div>
+          <div class="label">Drop image here or <strong>click to browse</strong></div>
+        </div>
+        <div class="preview-wrap" style="margin-top:1rem" id="cover-preview">
+          <span class="placeholder">Cover image will appear here</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>2 · Secret Message</h2>
+        <label>Your secret message (max 4 chars with 32-bit payload)</label>
+        <input type="text" id="secret-msg" placeholder="e.g. HELP" maxlength="4"
+               oninput="updateBitCount()">
+        <div style="margin-top:0.5rem;font-size:0.78rem;color:var(--muted)" id="bit-count">
+          0 / 32 bits used
+        </div>
+
+        <div style="margin-top:1.5rem">
+          <label>Payload bits (auto-generated from message)</label>
+          <div class="bit-grid" id="payload-bits"></div>
+        </div>
+
+        <button class="btn btn-primary" style="margin-top:1.5rem;width:100%"
+                id="btn-embed" onclick="runEmbed()" disabled>
+          🔒 Embed into Image
+        </button>
+      </div>
+    </div>
+
+    <div class="card" id="embed-result" style="display:none">
+      <h2>3 · Stego Image (download this)</h2>
+      <div class="cols">
+        <div>
+          <label>Cover (original)</label>
+          <div class="preview-wrap"><img id="result-cover"></div>
+        </div>
+        <div>
+          <label>Stego (contains hidden payload)</label>
+          <div class="preview-wrap"><img id="result-stego"></div>
+          <button class="btn btn-success" style="margin-top:0.8rem;width:100%"
+                  onclick="downloadStego()">⬇ Download stego.png</button>
+        </div>
+      </div>
+      <div class="log" id="embed-log"></div>
+    </div>
+  </div>
+
+  <!-- DETECT PANEL -->
+  <div class="panel" id="panel-detect">
+    <div class="info-box">
+      The <strong>Warden</strong> is a neural classifier trained adversarially against the Encoder.
+      Upload any image and it will output the probability it contains hidden data.
+      Near <strong>0.5 = fooled</strong> (encoder won). Near <strong>1.0 = detected</strong> (warden won).
+    </div>
+
+    <div class="cols">
+      <div class="card">
+        <h2>Upload Image to Inspect</h2>
+        <div class="drop-zone" id="dz-detect">
+          <input type="file" accept="image/*" id="file-detect" onchange="handleDetectUpload(event)">
+          <div class="icon">🔍</div>
+          <div class="label">Drop image here or <strong>click to browse</strong></div>
+        </div>
+        <div class="preview-wrap" style="margin-top:1rem" id="detect-preview">
+          <span class="placeholder">Image will appear here</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Warden Verdict</h2>
+        <p style="font-size:0.85rem;color:var(--muted);margin-bottom:1rem">
+          The warden outputs P(stego) — the probability this image contains a hidden payload.
+        </p>
+        <button class="btn btn-primary" style="width:100%" id="btn-detect"
+                onclick="runDetect()" disabled>
+          🔍 Run Warden Analysis
+        </button>
+
+        <div id="detect-result" style="display:none;margin-top:1rem">
+          <div class="prob-bar-wrap">
+            <div class="prob-label">
+              <span>Clean (0.0)</span>
+              <span id="prob-value">—</span>
+              <span>Stego (1.0)</span>
+            </div>
+            <div class="prob-bar-bg">
+              <div class="prob-bar-fill" id="prob-fill" style="width:0%;background:var(--accent)"></div>
+            </div>
+          </div>
+          <div id="detect-badge"></div>
+        </div>
+        <div class="log" id="detect-log"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- EXTRACT PANEL -->
+  <div class="panel" id="panel-extract">
+    <div class="info-box">
+      The <strong>Decoder</strong> extracts the hidden payload from a stego image.
+      Upload a stego image produced by the Embed tab — the decoder will recover the secret bits
+      and attempt to reconstruct the original message.
+    </div>
+
+    <div class="cols">
+      <div class="card">
+        <h2>Upload Stego Image</h2>
+        <div class="drop-zone" id="dz-extract">
+          <input type="file" accept="image/*" id="file-extract" onchange="handleExtractUpload(event)">
+          <div class="icon">🔓</div>
+          <div class="label">Drop stego image here or <strong>click to browse</strong></div>
+        </div>
+        <div class="preview-wrap" style="margin-top:1rem" id="extract-preview">
+          <span class="placeholder">Stego image will appear here</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Extracted Payload</h2>
+        <button class="btn btn-primary" style="width:100%" id="btn-extract"
+                onclick="runExtract()" disabled>
+          🔓 Decode Hidden Payload
+        </button>
+
+        <div id="extract-result" style="display:none;margin-top:1.2rem">
+          <label>Recovered bits</label>
+          <div class="bit-grid" id="extract-bits"></div>
+          <div style="margin-top:1rem">
+            <label>Decoded message</label>
+            <input type="text" id="decoded-msg" readonly
+                   style="font-size:1.2rem;letter-spacing:2px;text-align:center">
+          </div>
+        </div>
+        <div class="log" id="extract-log"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ABOUT PANEL -->
+  <div class="panel" id="panel-about">
+    <div class="card">
+      <h2>How This Works</h2>
+      <div style="font-size:0.9rem;line-height:1.8;color:var(--muted)">
+        <p>This demo runs three neural networks trained through an <strong style="color:var(--text)">adversarial arms race</strong> — similar to a GAN — entirely in your browser. No data is ever sent to a server.</p>
+        <br>
+        <p><strong style="color:var(--accent)">Encoder (Stegger)</strong><br>
+        Learns to hide a binary payload in a cover image as an imperceptible pixel residual. Its loss function has three components: image imperceptibility (MSE/SSIM), payload recoverability (BER), and adversarial evasion (fool the Warden). Nobody programmed how it hides data — it discovers this through 20+ rounds of training.</p>
+        <br>
+        <p><strong style="color:var(--red)">Warden (Detector)</strong><br>
+        A binary CNN classifier trained to distinguish clean images from stego images. It learns to detect whatever statistical fingerprint the Encoder leaves — fingerprints that may not match any named technique in the academic literature.</p>
+        <br>
+        <p><strong style="color:var(--green)">Decoder (Extractor)</strong><br>
+        Recovers the hidden payload from a stego image. Bit Error Rate (BER) measures how accurately it recovers each bit. BER &lt; 0.1 means the payload survived embedding reliably.</p>
+        <br>
+        <p><strong style="color:var(--text)">The Arms Race</strong><br>
+        Training alternates: the Warden trains to detect the Encoder's output, then the Encoder trains to fool the updated Warden. Over 20+ rounds, both networks evolve. The Encoder may discover steganographic strategies that have no human-designed analogue.</p>
+        <br>
+        <p><strong style="color:var(--yellow)">Limitation</strong><br>
+        The model weights act as a shared key — Alice and Bob must have the same trained encoder/decoder pair. For real-world use, the payload should be AES-encrypted before embedding. Steganography hides it; cryptography protects it.</p>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Architecture Reference</h2>
+      <div style="font-size:0.85rem;color:var(--muted);line-height:1.8">
+        <p>Based on <strong style="color:var(--text)">HiDDeN</strong> (Zhu et al., ECCV 2018) — the foundational neural steganography architecture.</p>
+        <p>Trained locally with PyTorch (CPU). Exported to ONNX and served via ONNX Runtime Web — no backend, no server, no data leaves your browser.</p>
+        <p>Part of the <a href="https://systemslibrarian.github.io/crypto-lab/" target="_blank">crypto-lab</a> portfolio — 35+ live cryptography demos from Atbash (~600 BCE) through NIST FIPS 203/204/205 (2024).</p>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<footer>
+  "Whatever you do, do it all for the glory of God." — 1 Corinthians 10:31
+  &nbsp;|&nbsp;
+  <a href="https://systemslibrarian.github.io/crypto-lab/" target="_blank">crypto-lab</a>
+</footer>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// Configuration — adjust to match arena.py training params
+// ═══════════════════════════════════════════════════════════════════════════
+const IMAGE_SIZE  = 64;   // must match --image_size
+const PAYLOAD_LEN = 32;   // must match --payload_len
+
+// ── Model loading ──────────────────────────────────────────────────────────
+let encoderSession = null;
+let decoderSession = null;
+let wardenSession  = null;
+let stegoTensor    = null;  // last embedded stego, for download
+
+function setDot(id, state, label) {
+  document.getElementById(id).className = 'dot ' + state;
+  document.getElementById(id.replace('dot','lbl')).textContent = label;
+}
+
+async function loadModels() {
+  ort.env.wasm.numThreads = 1;
+
+  const load = async (name, dotId, labelReady, labelErr) => {
+    try {
+      const session = await ort.InferenceSession.create(
+        `./${name}.onnx`,
+        { executionProviders: ['wasm'] }
+      );
+      setDot(dotId, 'ready', labelReady);
+      return session;
+    } catch (e) {
+      setDot(dotId, 'error', labelErr);
+      log('embed-log', `Failed to load ${name}.onnx — run export_onnx.py first`, 'err');
+      return null;
+    }
+  };
+
+  [encoderSession, decoderSession, wardenSession] = await Promise.all([
+    load('encoder', 'dot-enc', 'encoder.onnx ready', 'encoder.onnx missing'),
+    load('decoder', 'dot-dec', 'decoder.onnx ready', 'decoder.onnx missing'),
+    load('warden',  'dot-war', 'warden.onnx ready',  'warden.onnx missing'),
+  ]);
+
+  updateButtonStates();
+}
+
+// ── Tab switching ──────────────────────────────────────────────────────────
+function showTab(name) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('panel-' + name).classList.add('active');
+  event.currentTarget.classList.add('active');
+}
+
+// ── Image helpers ──────────────────────────────────────────────────────────
+function fileToImage(file) {
+  return new Promise(res => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => res(img);
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function imageToTensor(img) {
+  // Resize to IMAGE_SIZE × IMAGE_SIZE via canvas, normalize to [-1,1]
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = IMAGE_SIZE;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0, IMAGE_SIZE, IMAGE_SIZE);
+  const { data } = ctx.getImageData(0, 0, IMAGE_SIZE, IMAGE_SIZE);
+
+  const float32 = new Float32Array(3 * IMAGE_SIZE * IMAGE_SIZE);
+  for (let i = 0; i < IMAGE_SIZE * IMAGE_SIZE; i++) {
+    float32[i]                            = (data[i*4 + 0] / 255) * 2 - 1; // R
+    float32[i + IMAGE_SIZE*IMAGE_SIZE]    = (data[i*4 + 1] / 255) * 2 - 1; // G
+    float32[i + IMAGE_SIZE*IMAGE_SIZE*2]  = (data[i*4 + 2] / 255) * 2 - 1; // B
+  }
+  return new ort.Tensor('float32', float32, [1, 3, IMAGE_SIZE, IMAGE_SIZE]);
+}
+
+function tensorToCanvas(tensor) {
+  // Convert model output (1,3,H,W) in [-1,1] back to a displayable canvas
+  const data  = tensor.data;
+  const N     = IMAGE_SIZE * IMAGE_SIZE;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = IMAGE_SIZE;
+  const ctx  = canvas.getContext('2d');
+  const img  = ctx.createImageData(IMAGE_SIZE, IMAGE_SIZE);
+  for (let i = 0; i < N; i++) {
+    const r = Math.round(((data[i]         + 1) / 2) * 255);
+    const g = Math.round(((data[i + N]     + 1) / 2) * 255);
+    const b = Math.round(((data[i + N*2]   + 1) / 2) * 255);
+    img.data[i*4]   = Math.max(0, Math.min(255, r));
+    img.data[i*4+1] = Math.max(0, Math.min(255, g));
+    img.data[i*4+2] = Math.max(0, Math.min(255, b));
+    img.data[i*4+3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvas;
+}
+
+// ── Message / bit helpers ──────────────────────────────────────────────────
+function msgToBits(msg) {
+  const bytes = new TextEncoder().encode(msg);
+  const bits  = new Float32Array(PAYLOAD_LEN);
+  let idx = 0;
+  for (const byte of bytes) {
+    for (let i = 7; i >= 0; i--) {
+      if (idx >= PAYLOAD_LEN) break;
+      bits[idx++] = (byte >> i) & 1;
+    }
+  }
+  return bits;
+}
+
+function bitsToMsg(bits) {
+  let msg = '';
+  for (let i = 0; i < bits.length - 7; i += 8) {
+    let byte = 0;
+    for (let j = 0; j < 8; j++) byte = (byte << 1) | (bits[i+j] > 0.5 ? 1 : 0);
+    if (byte === 0) break;
+    msg += String.fromCharCode(byte);
+  }
+  return msg;
+}
+
+function renderBitGrid(containerId, bits) {
+  const el = document.getElementById(containerId);
+  el.innerHTML = '';
+  for (const b of bits) {
+    const bit = document.createElement('div');
+    const val = b > 0.5 ? 1 : 0;
+    bit.className = 'bit bit-' + val;
+    bit.textContent = val;
+    el.appendChild(bit);
+  }
+}
+
+// ── Log helper ─────────────────────────────────────────────────────────────
+function log(id, msg, type='info') {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const line = document.createElement('div');
+  line.className = 'log-line ' + type;
+  line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+// ── Button state management ────────────────────────────────────────────────
+let coverImage  = null;
+let detectImage = null;
+let extractImage = null;
+
+function updateButtonStates() {
+  document.getElementById('btn-embed').disabled   = !(encoderSession && coverImage);
+  document.getElementById('btn-detect').disabled  = !(wardenSession && detectImage);
+  document.getElementById('btn-extract').disabled = !(decoderSession && extractImage);
+}
+
+// ── Bit count display ──────────────────────────────────────────────────────
+function updateBitCount() {
+  const msg   = document.getElementById('secret-msg').value;
+  const bytes = new TextEncoder().encode(msg).length;
+  const bits  = bytes * 8;
+  document.getElementById('bit-count').textContent =
+    `${bits} / ${PAYLOAD_LEN} bits used`;
+  const payload = msgToBits(msg);
+  renderBitGrid('payload-bits', Array.from(payload));
+}
+
+// ── Upload handlers ────────────────────────────────────────────────────────
+async function handleCoverUpload(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  coverImage = await fileToImage(file);
+  const el   = document.getElementById('cover-preview');
+  el.innerHTML = `<img src="${coverImage.src}" style="max-width:100%;max-height:280px">`;
+  updateButtonStates();
+}
+
+async function handleDetectUpload(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  detectImage = await fileToImage(file);
+  const el = document.getElementById('detect-preview');
+  el.innerHTML = `<img src="${detectImage.src}" style="max-width:100%;max-height:280px">`;
+  document.getElementById('detect-result').style.display = 'none';
+  updateButtonStates();
+}
+
+async function handleExtractUpload(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  extractImage = await fileToImage(file);
+  const el = document.getElementById('extract-preview');
+  el.innerHTML = `<img src="${extractImage.src}" style="max-width:100%;max-height:280px">`;
+  document.getElementById('extract-result').style.display = 'none';
+  updateButtonStates();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EMBED
+// ═══════════════════════════════════════════════════════════════════════════
+async function runEmbed() {
+  if (!encoderSession || !coverImage) return;
+  const btn = document.getElementById('btn-embed');
+  btn.disabled = true; btn.textContent = '⏳ Embedding…';
+
+  const msg   = document.getElementById('secret-msg').value || 'DEMO';
+  const bits  = msgToBits(msg);
+
+  log('embed-log', `Embedding "${msg}" (${bits.filter(b=>b>0.5).length} 1-bits)...`);
+
+  try {
+    const t0      = performance.now();
+    const cover   = imageToTensor(coverImage);
+    const payload = new ort.Tensor('float32', bits, [1, PAYLOAD_LEN]);
+    const { stego } = await encoderSession.run({ cover, payload });
+    const elapsed = (performance.now() - t0).toFixed(0);
+
+    // Compute MSE distortion
+    const mse = Array.from(cover.data).reduce((s, v, i) => s + (v - stego.data[i])**2, 0)
+                / cover.data.length;
+
+    stegoTensor = stego;
+
+    const canvas = tensorToCanvas(stego);
+    const stegoDataUrl = canvas.toDataURL('image/png');
+
+    document.getElementById('result-cover').src = coverImage.src;
+    document.getElementById('result-stego').src = stegoDataUrl;
+    document.getElementById('embed-result').style.display = 'block';
+
+    log('embed-log', `Done in ${elapsed}ms  |  MSE distortion: ${mse.toFixed(6)}`, 'ok');
+    if (mse < 0.01) log('embed-log', 'Low distortion — stego image looks clean.', 'ok');
+    else log('embed-log', 'Higher distortion — model may need more training rounds.', 'err');
+
+  } catch (e) {
+    log('embed-log', `Error: ${e.message}`, 'err');
+  }
+
+  btn.disabled = false; btn.textContent = '🔒 Embed into Image';
+}
+
+function downloadStego() {
+  if (!stegoTensor) return;
+  const canvas = tensorToCanvas(stegoTensor);
+  const a = document.createElement('a');
+  a.href = canvas.toDataURL('image/png');
+  a.download = 'stego.png';
+  a.click();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DETECT
+// ═══════════════════════════════════════════════════════════════════════════
+async function runDetect() {
+  if (!wardenSession || !detectImage) return;
+  const btn = document.getElementById('btn-detect');
+  btn.disabled = true; btn.textContent = '⏳ Analysing…';
+
+  try {
+    const t0    = performance.now();
+    const image = imageToTensor(detectImage);
+    const { prob } = await wardenSession.run({ image });
+    const p     = prob.data[0];
+    const elapsed = (performance.now() - t0).toFixed(0);
+
+    const pct = (p * 100).toFixed(1);
+    document.getElementById('prob-value').textContent = p.toFixed(4);
+
+    const fill = document.getElementById('prob-fill');
+    fill.style.width = pct + '%';
+    fill.style.background = p > 0.5 ? 'var(--red)' : 'var(--green)';
+
+    const badge = document.getElementById('detect-badge');
+    if (p > 0.75) {
+      badge.innerHTML = `<div class="result-badge badge-stego">🔴 STEGO DETECTED — P=${p.toFixed(3)}</div>`;
+    } else if (p > 0.5) {
+      badge.innerHTML = `<div class="result-badge badge-warn">🟡 SUSPICIOUS — P=${p.toFixed(3)}</div>`;
+    } else {
+      badge.innerHTML = `<div class="result-badge badge-clean">🟢 CLEAN — P=${p.toFixed(3)}</div>`;
+    }
+
+    document.getElementById('detect-result').style.display = 'block';
+    log('detect-log', `P(stego) = ${p.toFixed(4)}  (${elapsed}ms)`, p > 0.5 ? 'err' : 'ok');
+
+  } catch (e) {
+    log('detect-log', `Error: ${e.message}`, 'err');
+  }
+
+  btn.disabled = false; btn.textContent = '🔍 Run Warden Analysis';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EXTRACT
+// ═══════════════════════════════════════════════════════════════════════════
+async function runExtract() {
+  if (!decoderSession || !extractImage) return;
+  const btn = document.getElementById('btn-extract');
+  btn.disabled = true; btn.textContent = '⏳ Decoding…';
+
+  try {
+    const t0    = performance.now();
+    const stego = imageToTensor(extractImage);
+    const { bits } = await decoderSession.run({ stego });
+    const elapsed = (performance.now() - t0).toFixed(0);
+
+    const bitsArr = Array.from(bits.data);
+    renderBitGrid('extract-bits', bitsArr);
+
+    const msg = bitsToMsg(bitsArr);
+    document.getElementById('decoded-msg').value = msg || '(empty)';
+    document.getElementById('extract-result').style.display = 'block';
+
+    const ones = bitsArr.filter(b => b > 0.5).length;
+    log('extract-log', `Decoded ${PAYLOAD_LEN} bits (${ones} ones) in ${elapsed}ms`, 'ok');
+    log('extract-log', `Message: "${msg || '(no printable chars)'}"`, msg ? 'ok' : 'info');
+
+  } catch (e) {
+    log('extract-log', `Error: ${e.message}`, 'err');
+  }
+
+  btn.disabled = false; btn.textContent = '🔓 Decode Hidden Payload';
+}
+
+// ── Drag and drop polish ───────────────────────────────────────────────────
+document.querySelectorAll('.drop-zone').forEach(dz => {
+  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+  dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('drag-over'); });
+});
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+loadModels();
+updateBitCount();
+</script>
+</body>
+</html>
