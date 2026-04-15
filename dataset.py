@@ -20,7 +20,7 @@ from PIL import Image
 
 
 class CoverImageDataset(Dataset):
-    EXTENSIONS = ('*.png', '*.jpg', '*.jpeg', '*.bmp', '*.tiff')
+    EXTENSIONS = ('*.png', '*.jpg', '*.jpeg', '*.bmp', '*.tiff', '*.pgm')
 
     def __init__(self, image_dir, image_size=64, split='train', split_ratio=0.8):
         self.image_size = image_size

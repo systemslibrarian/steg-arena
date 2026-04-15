@@ -90,6 +90,114 @@ Round N
 
 ---
 
+## How the Encoder Learns to Evade the Warden
+
+The encoder doesn't just hide data blindly — it uses the warden's own neural network
+as a differentiable guide to learn exactly what to avoid.
+
+### The three-part loss function
+
+During the encoder's training phase each round, every stego image is scored by three
+criteria, combined into a single loss that backpropagation optimises:
+
+| Loss component | Formula | What it teaches the encoder |
+|----------------|---------|----------------------------|
+| **Image loss** | `MSE(stego, cover)` | Keep pixel changes as small as possible — stay invisible to human eyes |
+| **Decode loss** | `BCE(decoder(stego), payload)` | Embed the payload so the decoder can recover it — don't lose the message |
+| **Adversarial loss** | `BCE(warden(stego), 0)` | Make the warden classify stego as **clean** (label 0) — fool the detector |
+
+The three components are weighted by `LAMBDA_IMAGE`, `LAMBDA_DECODE`, and
+`LAMBDA_ADVERSARIAL` (default 1.0, 1.0, 0.5) to balance invisibility, recoverability,
+and evasion.
+
+### The gradient trick
+
+The adversarial loss is where the real learning happens:
+
+1. The **warden is frozen** (`warden.eval()`) — its weights don't change during encoder training
+2. The encoder produces a stego image and passes it through the frozen warden
+3. The loss is computed as if the stego image were **clean** (target label = 0)
+4. **Backpropagation flows through the warden** back into the encoder — the gradients
+   tell the encoder exactly which pixel patterns the warden is currently using to detect
+   stego, and in which direction to adjust to avoid them
+
+The encoder literally reads the warden's mind through its gradients, then learns to
+produce images that exploit the warden's blind spots.
+
+### The arms race alternation
+
+Each round repeats two phases:
+
+1. **Warden trains** (encoder frozen) — sees the encoder's latest stego output alongside
+   clean covers, learns to tell them apart
+2. **Encoder trains** (warden frozen) — uses the warden's updated detection network as
+   a guide to learn new hiding strategies that evade the latest detection
+
+This creates an evolutionary arms race: the warden gets better at detecting → the encoder
+adapts to hide differently → the warden adapts again → and so on. Over many rounds, both
+networks become increasingly sophisticated.
+
+---
+
+## Network Architecture
+
+These are **not** pretrained foundation models or LLMs — they are small custom
+convolutional neural networks (CNNs) defined in `models.py`, trained from scratch
+on your images. The design is based on the
+[HiDDeN](https://arxiv.org/abs/1807.09937) paper (Zhu et al., ECCV 2018), scaled
+down for CPU training.
+
+### Building block
+
+Every network is built from `ConvBnRelu` — a single repeating unit:
+
+```
+Conv2d → BatchNorm2d → ReLU
+```
+
+### Network details
+
+| Network | Layers | Parameters | Architecture summary |
+|---------|--------|------------|----------------------|
+| **Encoder** | 5 conv + Tanh | 168,451 | Two-branch CNN. Cover branch extracts image features (2 layers). Payload is tiled spatially and concatenated with features. Joint branch (3 layers + 1×1 conv) produces a residual that is scaled by 0.1 and added to the cover image. |
+| **Decoder** | 4 conv + pool + FC | ~66K | Four ConvBnRelu layers → adaptive average pooling → linear head outputs one logit per payload bit. |
+| **Warden** | 4 conv + MaxPool + FC | 130,593 | Progressively pools with MaxPool2d(2) after each layer (64→32→16→8), then adaptive pool → linear binary classifier. Hidden dims double each stage: 32→64→64→128. |
+
+**Total: ~365K parameters** — roughly 10,000× smaller than a typical LLM.
+
+### Why the architecture matters
+
+The balance between encoder and warden capacity directly shapes the arms race:
+
+- **Warden too strong** → encoder can never learn to evade; training stalls with
+  warden_acc stuck near 1.0
+- **Warden too weak** → encoder fools it immediately; it never learns subtlety
+  because there's no pressure to improve
+- **Well matched** → both sides push each other, producing genuinely evolved strategies
+
+The current design is deliberately balanced and small so the arms race dynamic works
+on CPU hardware.
+
+### Ideas for improving the architecture
+
+If you have GPU access or want to push research further, here are concrete upgrades
+to try in `models.py`:
+
+| Upgrade | Where | What it does | Expected impact |
+|---------|-------|--------------|-----------------|
+| **ResNet blocks** | Encoder & Decoder | Replace `ConvBnRelu` with residual blocks (`x + conv(conv(x))`) | Better gradient flow → faster convergence, higher SSIM |
+| **U-Net encoder** | Encoder | Add skip connections from cover branch to joint branch at multiple resolutions | Preserves fine spatial detail → more imperceptible embedding |
+| **Attention layers** | Warden | Add channel or spatial attention (SE blocks, CBAM) | Warden focuses on diagnostic regions → forces encoder to hide more uniformly |
+| **SRNet / Zhu-Net warden** | Warden | Use a steganalysis-specific architecture from the literature | Much stronger detection → pushes encoder to develop advanced strategies |
+| **Larger hidden dims** | All networks | Increase `hidden_dim` from 64/32 to 128/64 or higher | More capacity for both sides, but slower training |
+| **Higher resolution** | All | Train at 128×128 or 256×256 (`--image_size 256`) | More spatial area to hide data, more realistic images |
+| **Longer payloads** | Encoder & Decoder | Increase `--payload_len` from 32 to 64 or 128 bits | More data hidden per image, harder to keep invisible |
+
+**Important:** When changing architecture in `models.py`, delete `output/` and retrain
+from scratch — old checkpoints won't be compatible with new network shapes.
+
+---
+
 ## Reading the Results
 
 | Metric | Encoder winning | Warden winning |
